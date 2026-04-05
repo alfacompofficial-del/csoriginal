@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { Player, Bot, Bullet, WEAPONS, DUST2_MAP, cloneWeapon } from "@/game/types";
 import { moveWithCollision, updateBots, updateBullets } from "@/game/engine";
-import { render, getCamera } from "@/game/renderer";
+import { Renderer3D } from "@/game/renderer3d";
 import WeaponBuyMenu from "./WeaponBuyMenu";
 
 interface GameCanvasProps {
@@ -49,6 +49,7 @@ function createBots(count: number): Bot[] {
 
 const GameCanvas = ({ onExit }: GameCanvasProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const renderer3dRef = useRef<Renderer3D | null>(null);
   const playerRef = useRef<Player>(createInitialPlayer());
   const botsRef = useRef<Bot[]>(createBots(5));
   const bulletsRef = useRef<Bullet[]>([]);
@@ -95,12 +96,16 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+
+    // Initialize 3D Renderer
+    if (!renderer3dRef.current) {
+      renderer3dRef.current = new Renderer3D(canvas);
+    }
 
     const resize = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
+      renderer3dRef.current?.resize(canvas.width, canvas.height);
     };
     resize();
     window.addEventListener("resize", resize);
@@ -116,7 +121,6 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
           p.reloadTimer = p.weapon.reloadTime;
         }
       }
-      // Switch weapons with number keys
       const num = parseInt(e.key);
       if (num >= 1 && num <= playerRef.current.weapons.length) {
         playerRef.current.weapon = playerRef.current.weapons[num - 1];
@@ -132,7 +136,14 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
     };
 
     const handleMouseMove = (e: MouseEvent) => {
+      // In 3D we might want to use movementX/Y for first person
+      // But for now, keeping the top-down logic or converting to screen pos
       mouseRef.current = { x: e.clientX, y: e.clientY };
+
+      // Update player angle based on mouse movement if in pointer lock
+      if (document.pointerLockElement === canvas) {
+        playerRef.current.angle += e.movementX * 0.005;
+      }
     };
 
     const handleMouseDown = (e: MouseEvent) => {
@@ -147,12 +158,11 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
 
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
-    canvas.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mousemove", handleMouseMove);
     canvas.addEventListener("mousedown", handleMouseDown);
     canvas.addEventListener("mouseup", handleMouseUp);
     canvas.addEventListener("contextmenu", handleContextMenu);
 
-    // Request pointer lock
     canvas.addEventListener("click", () => {
       if (!showBuyMenu) canvas.requestPointerLock();
     });
@@ -167,27 +177,23 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
       const map = DUST2_MAP;
 
       if (player.alive && !showBuyMenu) {
-        // Movement
         let dx = 0, dy = 0;
-        if (keys.has("w") || keys.has("ц")) dy -= player.speed;
-        if (keys.has("s") || keys.has("ы")) dy += player.speed;
-        if (keys.has("a") || keys.has("ф")) dx -= player.speed;
-        if (keys.has("d") || keys.has("в")) dx += player.speed;
-        if (keys.has("shift")) { dx *= 0.5; dy *= 0.5; }
+        // Relative movement based on angle
+        const moveX = Math.cos(player.angle);
+        const moveY = Math.sin(player.angle);
+        const sideX = Math.cos(player.angle + Math.PI/2);
+        const sideY = Math.sin(player.angle + Math.PI/2);
+
+        if (keys.has("w") || keys.has("ц")) { dx += moveX; dy += moveY; }
+        if (keys.has("s") || keys.has("ы")) { dx -= moveX; dy -= moveY; }
+        if (keys.has("a") || keys.has("ф")) { dx -= sideX; dy -= sideY; }
+        if (keys.has("d") || keys.has("в")) { dx += sideX; dy += sideY; }
 
         if (dx !== 0 || dy !== 0) {
-          player.pos = moveWithCollision(player.pos, dx, dy, 16, map.walls);
+          const mag = Math.sqrt(dx*dx + dy*dy);
+          const speed = player.speed * (keys.has("shift") ? 0.5 : 1);
+          player.pos = moveWithCollision(player.pos, (dx/mag) * speed, (dy/mag) * speed, 16, map.walls);
         }
-
-        // Clamp to map
-        player.pos.x = Math.max(16, Math.min(map.width - 16, player.pos.x));
-        player.pos.y = Math.max(16, Math.min(map.height - 16, player.pos.y));
-
-        // Aim
-        const cam = getCamera(player, canvas.width, canvas.height, map);
-        const worldX = mouseRef.current.x + cam.x;
-        const worldY = mouseRef.current.y + cam.y;
-        player.angle = Math.atan2(worldY - player.pos.y, worldX - player.pos.x);
 
         // Reload
         if (player.reloading) {
@@ -217,7 +223,6 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
                 ttl: 80,
               });
               lastShootRef.current = now;
-
               if (!player.weapon.auto) shootingRef.current = false;
             } else if (player.weapon.reserveAmmo > 0) {
               player.reloading = true;
@@ -227,43 +232,23 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
         }
       }
 
-      // Update bots
       updateBots(bots, player, bullets, map.walls, dt);
-
-      // Update bullets
       const result = updateBullets(bullets, player, bots, map.walls);
       if (result.killedBots > 0) {
         setKills(prev => prev + result.killedBots);
         player.money += result.killedBots * 300;
       }
 
-      // Check round end
       const aliveBots = bots.filter(b => b.alive).length;
       if (aliveBots === 0) {
         setRoundMessage("РАУНД ВЫИГРАН! Нажмите R для нового раунда");
         player.money += 3250;
       }
 
-      // Render
-      const cam = getCamera(player, canvas.width, canvas.height, map);
-      render(ctx, player, bots, bullets, map, cam, canvas.width, canvas.height);
-
-      // Round message
-      if (roundMessage && !showBuyMenu) {
-        ctx.fillStyle = "rgba(0,0,0,0.6)";
-        ctx.fillRect(canvas.width / 2 - 200, 10, 400, 40);
-        ctx.fillStyle = "#FFD700";
-        ctx.font = "bold 16px Rajdhani";
-        ctx.textAlign = "center";
-        ctx.fillText(roundMessage, canvas.width / 2, 36);
+      // Render 3D
+      if (renderer3dRef.current) {
+        renderer3dRef.current.render(player, bots, bullets, map);
       }
-
-      // Kill counter
-      ctx.fillStyle = "#FFF";
-      ctx.font = "bold 14px Rajdhani";
-      ctx.textAlign = "left";
-      ctx.fillText(`Убийств: ${kills}  |  Враги: ${aliveBots}/5`, 20, 30);
-      ctx.fillText(`ESC — выйти  |  B — магазин  |  R — перезарядка`, 20, 50);
 
       frameRef.current = requestAnimationFrame(gameLoop);
     };
@@ -275,26 +260,77 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
       window.removeEventListener("resize", resize);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
-      canvas.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mousemove", handleMouseMove);
       canvas.removeEventListener("mousedown", handleMouseDown);
       canvas.removeEventListener("mouseup", handleMouseUp);
       canvas.removeEventListener("contextmenu", handleContextMenu);
-      if (document.pointerLockElement) document.exitPointerLock();
     };
   }, [showBuyMenu, kills, restartRound, roundMessage, onExit]);
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-background">
-      <canvas ref={canvasRef} className="absolute inset-0 cursor-crosshair" />
+    <div className="relative w-screen h-screen overflow-hidden bg-black">
+      <canvas ref={canvasRef} className="absolute inset-0" />
+
+      {/* HUD and UI remain in 2D (HTML/React) */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-4 left-4 text-white font-bold drop-shadow-md">
+          Убийств: {kills} | Враги: {botsRef.current.filter(b => b.alive).length}/5
+        </div>
+
+        {roundMessage && !showBuyMenu && (
+          <div className="absolute top-10 left-1/2 -translate-x-1/2 bg-black/60 px-6 py-2 text-yellow-500 font-bold rounded">
+            {roundMessage}
+          </div>
+        )}
+
+        {/* Crosshair */}
+        {playerRef.current.alive && (
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 border-2 border-green-500 rounded-full" />
+        )}
+
+        {/* Health/Ammo Bar */}
+        <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-black/80 to-transparent p-6 flex justify-between items-end pointer-events-auto">
+          <div className="flex gap-8 items-end">
+            <div className="text-red-500">
+              <div className="text-xs uppercase opacity-70">Health</div>
+              <div className="text-4xl font-bold">{Math.ceil(playerRef.current.health)}</div>
+            </div>
+            <div className="text-blue-400">
+              <div className="text-xs uppercase opacity-70">Armor</div>
+              <div className="text-4xl font-bold">{Math.ceil(playerRef.current.armor)}</div>
+            </div>
+            <div className="text-green-500">
+              <div className="text-xs uppercase opacity-70">Money</div>
+              <div className="text-2xl font-bold">${playerRef.current.money}</div>
+            </div>
+          </div>
+
+          <div className="text-right">
+            <div className="text-yellow-500 text-sm uppercase">{playerRef.current.weapon.name}</div>
+            <div className="text-white">
+              <span className="text-5xl font-bold">{playerRef.current.weapon.currentAmmo}</span>
+              <span className="text-2xl opacity-50 ml-2">/ {playerRef.current.weapon.reserveAmmo}</span>
+            </div>
+            {playerRef.current.reloading && <div className="text-yellow-500 font-bold animate-pulse">RELOADING...</div>}
+          </div>
+        </div>
+      </div>
       
       {showBuyMenu && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <WeaponBuyMenu
             money={playerRef.current.money}
             onBuy={buyWeapon}
             onBuyArmor={buyArmor}
             onClose={() => { setShowBuyMenu(false); setRoundMessage(""); }}
           />
+        </div>
+      )}
+
+      {!playerRef.current.alive && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-900/40 text-white">
+          <h1 className="text-6xl font-black mb-4">YOU DIED</h1>
+          <p className="text-xl">Press R to restart</p>
         </div>
       )}
     </div>
