@@ -57,6 +57,21 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        cs: {
+          gold: "hsl(var(--cs-gold))",
+          orange: "hsl(var(--cs-orange))",
+          blue: "hsl(var(--cs-blue))",
+          dark: "hsl(var(--cs-dark))",
+          panel: "hsl(var(--cs-panel))",
+          "panel-hover": "hsl(var(--cs-panel-hover))",
+          success: "hsl(var(--cs-success))",
+          ct: "hsl(var(--cs-ct))",
+          t: "hsl(var(--cs-t))",
+        },
+      },
+      fontFamily: {
+        heading: ['Rajdhani', 'sans-serif'],
+        body: ['Inter', 'sans-serif'],
       },
       borderRadius: {
         lg: "var(--radius)",
