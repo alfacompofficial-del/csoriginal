@@ -1,15 +1,16 @@
 import { useRef, useEffect, useState, useCallback } from "react";
-import { Player, Bot, Bullet, WEAPONS, DUST2_MAP, cloneWeapon } from "@/game/types";
+import { Player, Bot, Bullet, WEAPONS, DUST2_MAP, cloneWeapon, GameMap } from "@/game/types";
 import { moveWithCollision, updateBots, updateBullets } from "@/game/engine";
-import { Renderer3D } from "@/game/renderer3d";
+import { render, getCamera } from "@/game/renderer";
 import WeaponBuyMenu from "./WeaponBuyMenu";
 
 interface GameCanvasProps {
   onExit: () => void;
+  mapName?: string;
 }
 
-function createInitialPlayer(): Player {
-  const spawn = DUST2_MAP.spawnCT[0];
+function createInitialPlayer(map: GameMap): Player {
+  const spawn = map.spawnCT[0];
   return {
     pos: { ...spawn },
     angle: 0,
@@ -27,9 +28,9 @@ function createInitialPlayer(): Player {
   };
 }
 
-function createBots(count: number): Bot[] {
+function createBots(count: number, map: GameMap): Bot[] {
   return Array.from({ length: count }, (_, i) => {
-    const spawn = DUST2_MAP.spawnT[i % DUST2_MAP.spawnT.length];
+    const spawn = map.spawnT[i % map.spawnT.length];
     return {
       id: i,
       pos: { x: spawn.x + (Math.random() - 0.5) * 40, y: spawn.y + (Math.random() - 0.5) * 40 },
@@ -47,11 +48,10 @@ function createBots(count: number): Bot[] {
   });
 }
 
-const GameCanvas = ({ onExit }: GameCanvasProps) => {
+const GameCanvas = ({ onExit, mapName }: GameCanvasProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const renderer3dRef = useRef<Renderer3D | null>(null);
-  const playerRef = useRef<Player>(createInitialPlayer());
-  const botsRef = useRef<Bot[]>(createBots(5));
+  const playerRef = useRef<Player>(createInitialPlayer(DUST2_MAP));
+  const botsRef = useRef<Bot[]>(createBots(5, DUST2_MAP));
   const bulletsRef = useRef<Bullet[]>([]);
   const keysRef = useRef<Set<string>>(new Set());
   const mouseRef = useRef({ x: 0, y: 0 });
@@ -85,9 +85,9 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
   }, []);
 
   const restartRound = useCallback(() => {
-    playerRef.current = createInitialPlayer();
+    playerRef.current = createInitialPlayer(DUST2_MAP);
     playerRef.current.money = 3200 + kills * 300;
-    botsRef.current = createBots(5);
+    botsRef.current = createBots(5, DUST2_MAP);
     bulletsRef.current = [];
     setShowBuyMenu(true);
     setRoundMessage("ПОКУПКА ОРУЖИЯ — Нажмите B");
@@ -96,16 +96,12 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
-    // Initialize 3D Renderer
-    if (!renderer3dRef.current) {
-      renderer3dRef.current = new Renderer3D(canvas);
-    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
     const resize = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      renderer3dRef.current?.resize(canvas.width, canvas.height);
     };
     resize();
     window.addEventListener("resize", resize);
@@ -126,9 +122,7 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
         playerRef.current.weapon = playerRef.current.weapons[num - 1];
         playerRef.current.reloading = false;
       }
-      if (e.key === "Escape") {
-        onExit();
-      }
+      if (e.key === "Escape") onExit();
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -136,24 +130,15 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-      // In 3D we might want to use movementX/Y for first person
-      // But for now, keeping the top-down logic or converting to screen pos
       mouseRef.current = { x: e.clientX, y: e.clientY };
-
-      // Update player angle based on mouse movement if in pointer lock
-      if (document.pointerLockElement === canvas) {
-        playerRef.current.angle += e.movementX * 0.005;
-      }
     };
 
     const handleMouseDown = (e: MouseEvent) => {
       if (e.button === 0) shootingRef.current = true;
     };
-
     const handleMouseUp = (e: MouseEvent) => {
       if (e.button === 0) shootingRef.current = false;
     };
-
     const handleContextMenu = (e: MouseEvent) => e.preventDefault();
 
     window.addEventListener("keydown", handleKeyDown);
@@ -162,10 +147,6 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
     canvas.addEventListener("mousedown", handleMouseDown);
     canvas.addEventListener("mouseup", handleMouseUp);
     canvas.addEventListener("contextmenu", handleContextMenu);
-
-    canvas.addEventListener("click", () => {
-      if (!showBuyMenu) canvas.requestPointerLock();
-    });
 
     const gameLoop = (time: number) => {
       const dt = Math.min(time - (lastTimeRef.current || time), 50);
@@ -177,22 +158,22 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
       const map = DUST2_MAP;
 
       if (player.alive && !showBuyMenu) {
-        let dx = 0, dy = 0;
-        // Relative movement based on angle
-        const moveX = Math.cos(player.angle);
-        const moveY = Math.sin(player.angle);
-        const sideX = Math.cos(player.angle + Math.PI/2);
-        const sideY = Math.sin(player.angle + Math.PI/2);
+        // Calculate angle from mouse
+        const cam = getCamera(player, canvas.width, canvas.height, map);
+        const worldMouseX = mouseRef.current.x + cam.x;
+        const worldMouseY = mouseRef.current.y + cam.y;
+        player.angle = Math.atan2(worldMouseY - player.pos.y, worldMouseX - player.pos.x);
 
-        if (keys.has("w") || keys.has("ц")) { dx += moveX; dy += moveY; }
-        if (keys.has("s") || keys.has("ы")) { dx -= moveX; dy -= moveY; }
-        if (keys.has("a") || keys.has("ф")) { dx -= sideX; dy -= sideY; }
-        if (keys.has("d") || keys.has("в")) { dx += sideX; dy += sideY; }
+        let dx = 0, dy = 0;
+        if (keys.has("w") || keys.has("ц")) dy -= 1;
+        if (keys.has("s") || keys.has("ы")) dy += 1;
+        if (keys.has("a") || keys.has("ф")) dx -= 1;
+        if (keys.has("d") || keys.has("в")) dx += 1;
 
         if (dx !== 0 || dy !== 0) {
-          const mag = Math.sqrt(dx*dx + dy*dy);
+          const mag = Math.sqrt(dx * dx + dy * dy);
           const speed = player.speed * (keys.has("shift") ? 0.5 : 1);
-          player.pos = moveWithCollision(player.pos, (dx/mag) * speed, (dy/mag) * speed, 16, map.walls);
+          player.pos = moveWithCollision(player.pos, (dx / mag) * speed, (dy / mag) * speed, 16, map.walls);
         }
 
         // Reload
@@ -245,10 +226,9 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
         player.money += 3250;
       }
 
-      // Render 3D
-      if (renderer3dRef.current) {
-        renderer3dRef.current.render(player, bots, bullets, map);
-      }
+      // Render 2D
+      const camera = getCamera(player, canvas.width, canvas.height, map);
+      render(ctx, player, bots, bullets, map, camera, canvas.width, canvas.height);
 
       frameRef.current = requestAnimationFrame(gameLoop);
     };
@@ -265,57 +245,23 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
       canvas.removeEventListener("mouseup", handleMouseUp);
       canvas.removeEventListener("contextmenu", handleContextMenu);
     };
-  }, [showBuyMenu, kills, restartRound, roundMessage, onExit]);
+  }, [showBuyMenu, kills, restartRound, onExit]);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-black">
       <canvas ref={canvasRef} className="absolute inset-0" />
 
-      {/* HUD and UI remain in 2D (HTML/React) */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-4 left-4 text-white font-bold drop-shadow-md">
-          Убийств: {kills} | Враги: {botsRef.current.filter(b => b.alive).length}/5
-        </div>
-
-        {roundMessage && !showBuyMenu && (
-          <div className="absolute top-10 left-1/2 -translate-x-1/2 bg-black/60 px-6 py-2 text-yellow-500 font-bold rounded">
-            {roundMessage}
-          </div>
-        )}
-
-        {/* Crosshair */}
-        {playerRef.current.alive && (
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 border-2 border-green-500 rounded-full" />
-        )}
-
-        {/* Health/Ammo Bar */}
-        <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-black/80 to-transparent p-6 flex justify-between items-end pointer-events-auto">
-          <div className="flex gap-8 items-end">
-            <div className="text-red-500">
-              <div className="text-xs uppercase opacity-70">Health</div>
-              <div className="text-4xl font-bold">{Math.ceil(playerRef.current.health)}</div>
-            </div>
-            <div className="text-blue-400">
-              <div className="text-xs uppercase opacity-70">Armor</div>
-              <div className="text-4xl font-bold">{Math.ceil(playerRef.current.armor)}</div>
-            </div>
-            <div className="text-green-500">
-              <div className="text-xs uppercase opacity-70">Money</div>
-              <div className="text-2xl font-bold">${playerRef.current.money}</div>
-            </div>
-          </div>
-
-          <div className="text-right">
-            <div className="text-yellow-500 text-sm uppercase">{playerRef.current.weapon.name}</div>
-            <div className="text-white">
-              <span className="text-5xl font-bold">{playerRef.current.weapon.currentAmmo}</span>
-              <span className="text-2xl opacity-50 ml-2">/ {playerRef.current.weapon.reserveAmmo}</span>
-            </div>
-            {playerRef.current.reloading && <div className="text-yellow-500 font-bold animate-pulse">RELOADING...</div>}
-          </div>
-        </div>
+      <div className="absolute top-4 left-4 text-white font-bold drop-shadow-md pointer-events-none">
+        <div>Убийств: {kills} | Враги: {botsRef.current.filter(b => b.alive).length}/5</div>
+        <div className="text-xs text-muted-foreground mt-1">ESC — выход | B — магазин | R — перезарядка</div>
       </div>
-      
+
+      {roundMessage && !showBuyMenu && (
+        <div className="absolute top-10 left-1/2 -translate-x-1/2 bg-black/60 px-6 py-2 text-yellow-500 font-bold rounded pointer-events-none">
+          {roundMessage}
+        </div>
+      )}
+
       {showBuyMenu && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <WeaponBuyMenu
@@ -328,9 +274,9 @@ const GameCanvas = ({ onExit }: GameCanvasProps) => {
       )}
 
       {!playerRef.current.alive && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-900/40 text-white">
-          <h1 className="text-6xl font-black mb-4">YOU DIED</h1>
-          <p className="text-xl">Press R to restart</p>
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-900/40 text-white pointer-events-none">
+          <h1 className="text-6xl font-black mb-4">ВЫ УБИТЫ</h1>
+          <p className="text-xl">Нажмите R для рестарта</p>
         </div>
       )}
     </div>
