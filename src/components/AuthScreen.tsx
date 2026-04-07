@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Crosshair, Shield, Target, Zap } from "lucide-react";
-import agentImg from "@/assets/agent.png";
+import AgentPreview3D from "./AgentPreview3D";
 
 type AuthMode = "login" | "register" | "forgot";
 
@@ -97,7 +97,9 @@ const AuthScreen = () => {
           </div>
           <p className="text-muted-foreground tracking-[0.3em] uppercase text-sm">Counter-Strike 2</p>
         </div>
-        <img src={agentImg} alt="Agent" className="h-[50vh] max-h-[450px] object-contain drop-shadow-[0_0_40px_rgba(255,165,0,0.15)]" />
+        <div className="w-full flex justify-center">
+          <AgentPreview3D className="pointer-events-auto" height={460} yOffset={18} />
+        </div>
         <div className="flex gap-6 mt-8 animate-fade-in" style={{ animationDelay: "0.3s" }}>
           {[
             { icon: Shield, label: "Тактика" },

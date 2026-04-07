@@ -86,12 +86,175 @@ export type Database = {
         }
         Relationships: []
       }
+      lobbies: {
+        Row: {
+          created_at: string
+          host_id: string
+          id: string
+          max_members: number
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          host_id: string
+          id?: string
+          max_members?: number
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          host_id?: string
+          id?: string
+          max_members?: number
+          status?: string
+        }
+        Relationships: []
+      }
+      lobby_invites: {
+        Row: {
+          created_at: string
+          id: string
+          lobby_id: string
+          receiver_id: string
+          sender_id: string
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          lobby_id: string
+          receiver_id: string
+          sender_id: string
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          lobby_id?: string
+          receiver_id?: string
+          sender_id?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      lobby_members: {
+        Row: {
+          id: string
+          joined_at: string
+          lobby_id: string
+          role: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          joined_at?: string
+          lobby_id: string
+          role?: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          joined_at?: string
+          lobby_id?: string
+          role?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      matchmaking_queue: {
+        Row: {
+          created_at: string
+          id: string
+          lobby_id: string | null
+          map_name: string
+          mode: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          lobby_id?: string | null
+          map_name?: string
+          mode?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          lobby_id?: string | null
+          map_name?: string
+          mode?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      matches: {
+        Row: {
+          created_at: string
+          id: string
+          map_name: string
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          map_name: string
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          map_name?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      match_players: {
+        Row: {
+          id: string
+          joined_at: string
+          match_id: string
+          team: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          joined_at?: string
+          match_id: string
+          team: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          joined_at?: string
+          match_id?: string
+          team?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      accept_lobby_invite: {
+        Args: {
+          invite_id: string
+        }
+        Returns: string
+      }
+      create_lobby: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
+      try_matchmake: {
+        Args: {
+          p_map_name: string
+          p_mode: string
+        }
+        Returns: string | null
+      }
     }
     Enums: {
       [_ in never]: never

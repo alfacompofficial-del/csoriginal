@@ -3,13 +3,13 @@ import { ArrowLeft, Lock, Users, Trophy } from "lucide-react";
 
 interface PlayMenuProps {
   onBack: () => void;
-  onStartGame: () => void;
+  onStartGame: (args: { mode: "closed" | "partners" | "competitive"; mapName: string }) => void;
 }
 
 const maps = [
   { name: "Dust 2", description: "Легендарная карта" },
-  { name: "Mirage", description: "Классическая карта (скоро)" },
-  { name: "Inferno", description: "Тактическая карта (скоро)" },
+  { name: "Mirage", description: "Классическая карта" },
+  { name: "Sandstone", description: "Новая карта" },
 ];
 
 const PlayMenu = ({ onBack, onStartGame }: PlayMenuProps) => {
@@ -54,9 +54,8 @@ const PlayMenu = ({ onBack, onStartGame }: PlayMenuProps) => {
                 <button
                   key={map.name}
                   onClick={() => setSelectedMap(map.name)}
-                  disabled={map.name !== "Dust 2"}
                   className={`cs-panel p-6 text-center transition-all ${
-                    selectedMap === map.name ? "border-primary cs-glow" : map.name === "Dust 2" ? "hover:border-primary/30" : "opacity-40 cursor-not-allowed"
+                    selectedMap === map.name ? "border-primary cs-glow" : "hover:border-primary/30"
                   }`}
                 >
                   <h4 className="font-heading text-lg font-bold text-foreground">{map.name}</h4>
@@ -65,7 +64,7 @@ const PlayMenu = ({ onBack, onStartGame }: PlayMenuProps) => {
               ))}
             </div>
             <div className="flex gap-4">
-              <button onClick={onStartGame} disabled={!selectedMap} className={`cs-btn-primary ${!selectedMap ? "opacity-50 cursor-not-allowed" : ""}`}>
+              <button onClick={() => onStartGame({ mode: "closed", mapName: (selectedMap ?? "Dust 2") })} disabled={!selectedMap} className={`cs-btn-primary ${!selectedMap ? "opacity-50 cursor-not-allowed" : ""}`}>
                 Начать игру
               </button>
               <button onClick={() => setMode("select")} className="cs-btn-secondary">Назад</button>
@@ -80,7 +79,7 @@ const PlayMenu = ({ onBack, onStartGame }: PlayMenuProps) => {
             </h2>
             <p className="text-muted-foreground mb-8">Играете на карте Dust 2 с ботами</p>
             <div className="flex gap-4 justify-center">
-              <button onClick={onStartGame} className="cs-btn-primary text-lg px-10">Начать игру</button>
+              <button onClick={() => onStartGame({ mode: mode as any, mapName: "Dust 2" })} className="cs-btn-primary text-lg px-10">Начать игру</button>
               <button onClick={() => setMode("select")} className="cs-btn-secondary">Назад</button>
             </div>
           </div>

@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
-import { Settings, LogOut, UserPlus, Check, X, User, Gamepad2 } from "lucide-react";
+import { Settings, LogOut, UserPlus, Check, X, User, Gamepad2, Users } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import bgImg from "@/assets/cs2-bg.jpg";
-import agentImg from "@/assets/agent.png";
 import SettingsPanel from "./SettingsPanel";
 import PlayMenu from "./PlayMenu";
 import GameCanvas from "./GameCanvas";
+import LobbyScreen from "./LobbyScreen";
+import AgentPreview3D from "./AgentPreview3D";
 
 interface FriendData {
   id: string;
@@ -20,11 +20,19 @@ interface FriendRequestData {
   senderId: string;
 }
 
+interface LobbyInviteData {
+  id: string;
+  lobbyId: string;
+  senderId: string;
+  senderNickname: string;
+}
+
 const MainMenu = () => {
   const { user, profile, signOut } = useAuth();
   const [showSettings, setShowSettings] = useState(false);
   const [showPlayMenu, setShowPlayMenu] = useState(false);
   const [showGame, setShowGame] = useState(false);
+  const [showLobby, setShowLobby] = useState(false);
   const [showQuitConfirm, setShowQuitConfirm] = useState(false);
   const [showAddFriend, setShowAddFriend] = useState(false);
   const [friendSearch, setFriendSearch] = useState("");
@@ -33,6 +41,9 @@ const MainMenu = () => {
 
   const [friends, setFriends] = useState<FriendData[]>([]);
   const [friendRequests, setFriendRequests] = useState<FriendRequestData[]>([]);
+  const [lobbyInvites, setLobbyInvites] = useState<LobbyInviteData[]>([]);
+  const [joinLobbyId, setJoinLobbyId] = useState<string | null>(null);
+  const [matchmaking, setMatchmaking] = useState<{ active: boolean; message: string }>({ active: false, message: "" });
 
   const loadFriends = useCallback(async () => {
     if (!user) return;
@@ -87,28 +98,140 @@ const MainMenu = () => {
     }
   }, [user]);
 
+  const loadLobbyInvites = useCallback(async () => {
+    if (!user) return;
+    const { data: invites } = await supabase
+      .from("lobby_invites")
+      .select("id, lobby_id, sender_id")
+      .eq("receiver_id", user.id)
+      .eq("status", "pending");
+
+    if (invites && invites.length > 0) {
+      const senderIds = invites.map((i) => i.sender_id);
+      const { data: profiles } = await supabase.from("profiles").select("user_id, nickname").in("user_id", senderIds);
+      const profileMap = new Map(profiles?.map((p) => [p.user_id, p.nickname]) ?? []);
+      setLobbyInvites(
+        invites.map((i) => ({
+          id: i.id,
+          lobbyId: i.lobby_id,
+          senderId: i.sender_id,
+          senderNickname: profileMap.get(i.sender_id) ?? "Unknown",
+        }))
+      );
+    } else {
+      setLobbyInvites([]);
+    }
+  }, [user]);
+
   useEffect(() => {
     loadFriends();
     loadFriendRequests();
-  }, [loadFriends, loadFriendRequests]);
+    loadLobbyInvites();
+  }, [loadFriends, loadFriendRequests, loadLobbyInvites]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel(`friend_requests:${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "friend_requests", filter: `receiver_id=eq.${user.id}` },
+        () => {
+          loadFriendRequests();
+          loadFriends();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "friend_requests", filter: `sender_id=eq.${user.id}` },
+        () => {
+          loadFriendRequests();
+          loadFriends();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "friendships", filter: `user_id=eq.${user.id}` },
+        () => {
+          loadFriends();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "lobby_invites", filter: `receiver_id=eq.${user.id}` },
+        () => {
+          loadLobbyInvites();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, loadFriendRequests, loadFriends, loadLobbyInvites]);
+
+  useEffect(() => {
+    if (!user) return;
+    // keep lobby invites fresh too
+    const channel = supabase
+      .channel(`lobby_invites:${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "lobby_invites", filter: `receiver_id=eq.${user.id}` },
+        () => loadLobbyInvites()
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, loadLobbyInvites]);
 
   const sendFriendRequest = async () => {
     if (!friendSearch.trim() || !user) return;
     setFriendError("");
 
     // Find user by nickname
-    const { data: targetProfile } = await supabase
+    const nick = friendSearch.trim();
+    const { data: targetProfile, error: findErr } = await supabase
       .from("profiles")
       .select("user_id")
-      .eq("nickname", friendSearch.trim())
+      .eq("nickname", nick)
       .single();
 
-    if (!targetProfile) {
+    if (findErr || !targetProfile) {
       setFriendError("Игрок не найден");
       return;
     }
     if (targetProfile.user_id === user.id) {
       setFriendError("Нельзя добавить себя");
+      return;
+    }
+
+    // Already friends?
+    const { data: existingFriend } = await supabase
+      .from("friendships")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("friend_id", targetProfile.user_id)
+      .maybeSingle();
+
+    if (existingFriend) {
+      setFriendError("Этот игрок уже у вас в друзьях");
+      return;
+    }
+
+    // If there is a pending request from them to you — ask user to accept instead of creating a reverse pending.
+    const { data: reversePending } = await supabase
+      .from("friend_requests")
+      .select("id, status")
+      .eq("sender_id", targetProfile.user_id)
+      .eq("receiver_id", user.id)
+      .eq("status", "pending")
+      .maybeSingle();
+
+    if (reversePending?.id) {
+      setFriendError("У этого игрока уже есть заявка к вам — примите её в списке заявок");
       return;
     }
 
@@ -119,7 +242,7 @@ const MainMenu = () => {
 
     if (error) {
       if (error.code === "23505") setFriendError("Заявка уже отправлена");
-      else setFriendError("Ошибка отправки");
+      else setFriendError(error.message || "Ошибка отправки");
       return;
     }
 
@@ -139,6 +262,18 @@ const MainMenu = () => {
     await loadFriendRequests();
   };
 
+  const acceptLobbyInvite = async (inviteId: string, lobbyId: string) => {
+    await supabase.rpc("accept_lobby_invite", { invite_id: inviteId });
+    setJoinLobbyId(lobbyId);
+    setShowLobby(true);
+    await loadLobbyInvites();
+  };
+
+  const rejectLobbyInvite = async (inviteId: string) => {
+    await supabase.from("lobby_invites").update({ status: "rejected" }).eq("id", inviteId);
+    await loadLobbyInvites();
+  };
+
   const handleAvatarChange = () => {
     const input = document.createElement("input");
     input.type = "file";
@@ -150,16 +285,67 @@ const MainMenu = () => {
     input.click();
   };
 
+  const startMatchmaking = useCallback(async (args: { mode: "closed" | "partners" | "competitive"; mapName: string; lobbyId: string | null }) => {
+    if (!user) return;
+    setMatchmaking({ active: true, message: "Поиск игроков..." });
+
+    // Upsert into queue (unique by user_id)
+    await supabase.from("matchmaking_queue").upsert({
+      user_id: user.id,
+      lobby_id: args.lobbyId,
+      mode: args.mode,
+      map_name: args.mapName,
+    }, { onConflict: "user_id" });
+
+    const tryOnce = async (): Promise<string | null> => {
+      const { data, error } = await supabase.rpc("try_matchmake", { p_mode: args.mode, p_map_name: args.mapName });
+      if (error) {
+        setMatchmaking({ active: false, message: "" });
+        setFriendError(error.message || "Ошибка матчмейкинга");
+        return null;
+      }
+      return (data as string | null) ?? null;
+    };
+
+    let matchId = await tryOnce();
+    if (matchId) {
+      setMatchmaking({ active: false, message: "" });
+      setShowGame(true);
+      return;
+    }
+
+    setMatchmaking({ active: true, message: "Ждём второго игрока..." });
+    const startedAt = Date.now();
+
+    const interval = window.setInterval(async () => {
+      if (Date.now() - startedAt > 60_000) {
+        window.clearInterval(interval);
+        await supabase.from("matchmaking_queue").delete().eq("user_id", user.id);
+        setMatchmaking({ active: false, message: "" });
+        setFriendError("Не удалось найти игроков за 60 секунд");
+        return;
+      }
+      matchId = await tryOnce();
+      if (matchId) {
+        window.clearInterval(interval);
+        setMatchmaking({ active: false, message: "" });
+        setShowGame(true);
+      }
+    }, 2000);
+  }, [user]);
+
   if (showGame) return <GameCanvas onExit={() => setShowGame(false)} />;
   if (showSettings) return <SettingsPanel onBack={() => setShowSettings(false)} />;
-  if (showPlayMenu) return <PlayMenu onBack={() => setShowPlayMenu(false)} onStartGame={() => { setShowPlayMenu(false); setShowGame(true); }} />;
+  if (showPlayMenu) return <PlayMenu onBack={() => setShowPlayMenu(false)} onStartGame={(args) => { setShowPlayMenu(false); startMatchmaking({ ...args, lobbyId: null }); }} />;
+  if (showLobby) return <LobbyScreen initialLobbyId={joinLobbyId} onBack={() => { setJoinLobbyId(null); setShowLobby(false); }} onStart={(args) => { setShowLobby(false); startMatchmaking(args); }} />;
 
   const username = profile?.nickname || "Player";
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-background">
-      <img src={bgImg} alt="" className="absolute inset-0 w-full h-full object-cover opacity-30" />
+      <div className="absolute inset-0 bg-gradient-to-br from-cs-dark via-background to-cs-dark" />
       <div className="absolute inset-0 bg-gradient-to-r from-background via-background/80 to-background/60" />
+      <img src="/placeholder.svg" alt="" className="absolute inset-0 w-full h-full object-cover opacity-[0.06] mix-blend-overlay" />
 
       <div className="relative z-10 min-h-screen flex">
         {/* Left side */}
@@ -188,6 +374,9 @@ const MainMenu = () => {
               <Gamepad2 className="w-6 h-6" />
               ИГРАТЬ
             </button>
+            <button onClick={() => setShowLobby(true)} className="group relative p-3 bg-secondary rounded-lg border border-border hover:border-primary/30 transition-all" title="Лобби">
+              <Users className="w-6 h-6 text-muted-foreground group-hover:text-foreground transition-colors" />
+            </button>
             <button onClick={() => setShowSettings(true)} className="group relative p-3 bg-secondary rounded-lg border border-border hover:border-primary/30 transition-all" title="Настройки">
               <Settings className="w-6 h-6 text-muted-foreground group-hover:text-foreground transition-colors" />
             </button>
@@ -196,8 +385,10 @@ const MainMenu = () => {
             </button>
           </div>
 
-          <div className="flex-1 flex items-end justify-center pointer-events-none">
-            <img src={agentImg} alt="Agent" className="h-[70vh] max-h-[600px] object-contain drop-shadow-2xl" />
+          <div className="flex-1 flex items-end justify-center">
+            <div className="pointer-events-auto w-full flex justify-center">
+              <AgentPreview3D height={600} yOffset={22} />
+            </div>
           </div>
         </div>
 
@@ -239,6 +430,25 @@ const MainMenu = () => {
             </div>
           )}
 
+          {lobbyInvites.length > 0 && (
+            <div className="mb-4">
+              <p className="text-xs text-accent uppercase tracking-wider mb-2 font-semibold">Инвайты в лобби ({lobbyInvites.length})</p>
+              {lobbyInvites.map((inv) => (
+                <div key={inv.id} className="flex items-center justify-between bg-secondary/50 rounded p-2 mb-1">
+                  <span className="text-sm text-foreground">{inv.senderNickname}</span>
+                  <div className="flex gap-1">
+                    <button onClick={() => acceptLobbyInvite(inv.id, inv.lobbyId)} className="p-1 hover:bg-cs-success/20 rounded transition-colors" title="Принять">
+                      <Check className="w-4 h-4 text-cs-success" />
+                    </button>
+                    <button onClick={() => rejectLobbyInvite(inv.id)} className="p-1 hover:bg-destructive/20 rounded transition-colors" title="Отклонить">
+                      <X className="w-4 h-4 text-destructive" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto space-y-1">
             {friends.length === 0 && (
               <p className="text-muted-foreground text-sm text-center py-4">Пока нет друзей</p>
@@ -262,6 +472,25 @@ const MainMenu = () => {
               <button onClick={signOut} className="cs-btn-primary px-8">Да</button>
               <button onClick={() => setShowQuitConfirm(false)} className="cs-btn-secondary px-8">Нет</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {matchmaking.active && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/70 backdrop-blur-sm">
+          <div className="cs-panel p-8 text-center animate-fade-in max-w-sm">
+            <h3 className="font-heading text-2xl font-bold text-foreground mb-3 uppercase">Поиск матча</h3>
+            <p className="text-muted-foreground mb-6">{matchmaking.message}</p>
+            <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-6" />
+            <button
+              onClick={async () => {
+                if (user) await supabase.from("matchmaking_queue").delete().eq("user_id", user.id);
+                setMatchmaking({ active: false, message: "" });
+              }}
+              className="cs-btn-secondary px-10"
+            >
+              Отмена
+            </button>
           </div>
         </div>
       )}
