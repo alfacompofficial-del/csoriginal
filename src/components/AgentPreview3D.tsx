@@ -6,15 +6,19 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 interface AgentPreview3DProps {
   className?: string;
   modelUrl?: string;
+  fallbackImgUrl?: string;
   height?: number;
   yOffset?: number;
+  showErrorOverlay?: boolean;
 }
 
 export default function AgentPreview3D({
   className,
   modelUrl = "/models/agent.glb",
+  fallbackImgUrl = "/placeholder.svg",
   height = 520,
   yOffset = 10,
+  showErrorOverlay = true,
 }: AgentPreview3DProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [loadError, setLoadError] = useState<string>("");
@@ -126,9 +130,16 @@ export default function AgentPreview3D({
       <div className="relative">
         <canvas ref={canvasRef} style={{ width: "100%", height }} />
         {loadError && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-white text-sm p-6 text-center">
-            {loadError}
-          </div>
+          <>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <img src={fallbackImgUrl} alt="" className="w-full h-full object-contain opacity-40" />
+            </div>
+            {showErrorOverlay && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/35 text-white text-sm p-6 text-center">
+                {loadError}
+              </div>
+            )}
+          </>
         )}
       </div>
       <div className="mt-2 text-xs text-muted-foreground text-center">

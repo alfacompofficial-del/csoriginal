@@ -98,7 +98,7 @@ const AuthScreen = () => {
           <p className="text-muted-foreground tracking-[0.3em] uppercase text-sm">Counter-Strike 2</p>
         </div>
         <div className="w-full flex justify-center">
-          <AgentPreview3D className="pointer-events-auto" height={460} yOffset={18} />
+          <AgentPreview3D className="pointer-events-auto" height={460} yOffset={18} showErrorOverlay={false} />
         </div>
         <div className="flex gap-6 mt-8 animate-fade-in" style={{ animationDelay: "0.3s" }}>
           {[

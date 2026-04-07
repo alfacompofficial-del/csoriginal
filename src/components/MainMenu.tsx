@@ -263,7 +263,11 @@ const MainMenu = () => {
   };
 
   const acceptLobbyInvite = async (inviteId: string, lobbyId: string) => {
-    await supabase.rpc("accept_lobby_invite", { invite_id: inviteId });
+    const { error } = await supabase.rpc("accept_lobby_invite", { invite_id: inviteId });
+    if (error) {
+      setFriendError(error.message || "Не удалось принять инвайт в лобби");
+      return;
+    }
     setJoinLobbyId(lobbyId);
     setShowLobby(true);
     await loadLobbyInvites();
@@ -289,19 +293,26 @@ const MainMenu = () => {
     if (!user) return;
     setMatchmaking({ active: true, message: "Поиск игроков..." });
 
-    // Upsert into queue (unique by user_id)
-    await supabase.from("matchmaking_queue").upsert({
+    // If Supabase tables/RPC aren't deployed yet, don't block starting the game.
+    const { error: queueErr } = await supabase.from("matchmaking_queue").upsert({
       user_id: user.id,
       lobby_id: args.lobbyId,
       mode: args.mode,
       map_name: args.mapName,
     }, { onConflict: "user_id" });
+    if (queueErr) {
+      setMatchmaking({ active: false, message: "" });
+      setFriendError("Матчмейкинг пока не настроен на сервере — запускаю локальную игру с ботами");
+      setShowGame(true);
+      return;
+    }
 
     const tryOnce = async (): Promise<string | null> => {
       const { data, error } = await supabase.rpc("try_matchmake", { p_mode: args.mode, p_map_name: args.mapName });
       if (error) {
         setMatchmaking({ active: false, message: "" });
-        setFriendError(error.message || "Ошибка матчмейкинга");
+        setFriendError("Матчмейкинг пока не настроен на сервере — запускаю локальную игру с ботами");
+        setShowGame(true);
         return null;
       }
       return (data as string | null) ?? null;
